@@ -1,113 +1,146 @@
-import { UserDatabase } from "../database/UserDatabase"
-import { GetUsersInput, GetUsersOutput, LoginInput, LoginOutput, SignupInput, SignupOutput } from "../dtos/UserDTO"
-import { BadRequestError } from "../errors/BadRequestError"
-import { NotFoundError } from "../errors/NotFoundError"
-import { User } from "../models/User"
-import { USER_ROLES } from "../types"
+import { UserDatabase } from "../database/UserDatabase";
+import {
+  GetUsersInput,
+  GetUsersOutput,
+  LoginInput,
+  LoginOutput,
+  SignupInput,
+  SignupOutput,
+} from "../dtos/UserDTO";
+import { BadRequestError } from "../errors/BadRequestError";
+import { NotFoundError } from "../errors/NotFoundError";
+import { User } from "../models/User";
+import { IdGenerator } from "../services/IdGenerator";
+import { TokenManager, TokenPayload } from "../services/TokenManager";
+import { USER_ROLES } from "../types";
 
 export class UserBusiness {
-    constructor(
-        private userDatabase: UserDatabase
-    ) {}
+  constructor(
+    private userDatabase: UserDatabase,
+    private idGenerator: IdGenerator,
+    private tokenManager: TokenManager
+  ) {}
 
-    public getUsers = async (input: GetUsersInput): Promise<GetUsersOutput> => {
-        const { q } = input
+  public getUsers = async (input: GetUsersInput): Promise<GetUsersOutput> => {
+    const { q } = input;
 
-        if (typeof q !== "string" && q !== undefined) {
-            throw new BadRequestError("'q' deve ser string ou undefined")
-        }
-
-        const usersDB = await this.userDatabase.findUsers(q)
-
-        const users = usersDB.map((userDB) => {
-            const user = new User(
-                userDB.id,
-                userDB.name,
-                userDB.email,
-                userDB.password,
-                userDB.role,
-                userDB.created_at
-            )
-
-            return user.toBusinessModel()
-        })
-
-        const output: GetUsersOutput = users
-
-        return output
+    if (typeof q !== "string" && q !== undefined) {
+      throw new BadRequestError("'q' deve ser string ou undefined");
     }
 
-    public signup = async (input: SignupInput): Promise<SignupOutput> => {
-        const { id, name, email, password } = input
+    const usersDB = await this.userDatabase.findUsers(q);
 
-        if (typeof id !== "string") {
-            throw new BadRequestError("'id' deve ser string")
-        }
+    const users = usersDB.map((userDB) => {
+      const user = new User(
+        userDB.id,
+        userDB.name,
+        userDB.email,
+        userDB.password,
+        userDB.role,
+        userDB.created_at
+      );
 
-        if (typeof name !== "string") {
-            throw new BadRequestError("'name' deve ser string")
-        }
+      return user.toBusinessModel();
+    });
 
-        if (typeof email !== "string") {
-            throw new BadRequestError("'email' deve ser string")
-        }
+    const output: GetUsersOutput = users;
 
-        if (typeof password !== "string") {
-            throw new BadRequestError("'password' deve ser string")
-        }
+    return output;
+  };
 
-        const userDBExists = await this.userDatabase.findUserById(id)
+  public signup = async (input: SignupInput): Promise<SignupOutput> => {
+    const { name, email, password } = input;
 
-        if (userDBExists) {
-            throw new BadRequestError("'id' já existe")
-        }
-
-        const newUser = new User(
-            id,
-            name,
-            email,
-            password,
-            USER_ROLES.NORMAL, // só é possível criar users com contas normais
-            new Date().toISOString()
-        )
-
-        const newUserDB = newUser.toDBModel()
-        await this.userDatabase.insertUser(newUserDB)
-
-        const output: SignupOutput = {
-            message: "Cadastro realizado com sucesso",
-            token: "token"
-        }
-
-        return output
+    if (typeof name !== "string") {
+      throw new BadRequestError("'name' deve ser string");
     }
 
-    public login = async (input: LoginInput): Promise<LoginOutput> => {
-        const { email, password } = input
-
-        if (typeof email !== "string") {
-            throw new Error("'email' deve ser string")
-        }
-
-        if (typeof password !== "string") {
-            throw new Error("'password' deve ser string")
-        }
-
-        const userDB = await this.userDatabase.findUserByEmail(email)
-
-        if (!userDB) {
-            throw new NotFoundError("'email' não encontrado")
-        }
-
-        if (password !== userDB.password) {
-            throw new BadRequestError("'email' ou 'password' incorretos")
-        }
-
-        const output: LoginOutput = {
-            message: "Login realizado com sucesso",
-            token: "token"
-        }
-
-        return output
+    if (typeof email !== "string") {
+      throw new BadRequestError("'email' deve ser string");
     }
+
+    if (typeof password !== "string") {
+      throw new BadRequestError("'password' deve ser string");
+    }
+
+    const id = this.idGenerator.generate();
+
+    const newUser = new User(
+      id,
+      name,
+      email,
+      password,
+      USER_ROLES.NORMAL, // só é possível criar users com contas normais
+      new Date().toISOString()
+    );
+
+    const newUserDB = newUser.toDBModel();
+    await this.userDatabase.insertUser(newUserDB);
+
+    const tokenPayLoad: TokenPayload = {
+      id: newUser.getId(),
+      name: newUser.getName(),
+      role: newUser.getRole(),
+    };
+
+    const token = this.tokenManager.createToken(tokenPayLoad)
+
+    const output: SignupOutput = {
+      message: "Cadastro realizado com sucesso",
+      token
+    };
+
+    return output;
+  };
+
+  public login = async (input: LoginInput): Promise<LoginOutput> => {
+    const { email, password } = input;
+
+    if (typeof email !== "string") {
+      throw new Error("'email' deve ser string");
+    }
+
+    if (typeof password !== "string") {
+      throw new Error("'password' deve ser string");
+    }
+
+    const userDB = await this.userDatabase.findUserByEmail(email);
+
+    if (!userDB) {
+      throw new NotFoundError("'email' não encontrado");
+    }
+
+    if (password !== userDB.password) {
+      throw new BadRequestError("'email' ou 'password' incorretos");
+    }
+
+    const id = this.idGenerator.generate();
+
+    const user = new User(
+      userDB.id,
+      userDB.name,
+      userDB.email,
+      userDB.password,
+      userDB.role,
+      userDB.created_at
+    );
+
+    const newUserDB = user.toDBModel();
+    await this.userDatabase.insertUser(newUserDB);
+
+    const tokenPayLoad: TokenPayload = {
+        id: user.getId(),
+        name: user.getName(),
+        role: user.getRole(),
+      };
+  
+      const token = this.tokenManager.createToken(tokenPayLoad)
+
+    const output: LoginOutput = {
+      message: "Login realizado com sucesso",
+      token
+    };
+
+    return output;
+  };
 }
